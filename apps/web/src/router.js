@@ -1,0 +1,12 @@
+import { createRouter, createWebHistory } from 'vue-router';
+import LoginView from './views/LoginView.vue';
+import DashboardView from './views/DashboardView.vue';
+import CustomersView from './views/CustomersView.vue';
+import OrdersView from './views/OrdersView.vue';
+import { auth } from './auth';
+const router = createRouter({ history: createWebHistory(), routes: [{ path: '/login', component: LoginView }, { path: '/', component: DashboardView, meta: { auth: true } }, { path: '/customers', component: CustomersView, meta: { auth: true, staff: true } }, { path: '/orders', component: OrdersView, meta: { auth: true } }] });
+router.beforeEach(to => { if (to.meta.auth && !auth.user)
+    return '/login'; if (to.meta.staff && auth.user?.role === 'CUSTOMER')
+    return '/'; if (to.path === '/login' && auth.user)
+    return '/'; });
+export default router;

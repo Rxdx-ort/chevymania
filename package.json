@@ -1,0 +1,12 @@
+{
+  "name": "chevymania",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter api dev\" \"pnpm --filter web dev\"",
+    "build": "pnpm --filter api build && pnpm --filter web build",
+    "test": "pnpm --filter api test",
+    "seed": "pnpm --filter api seed"
+  },
+  "devDependencies": { "concurrently": "^9.1.2" }
+}

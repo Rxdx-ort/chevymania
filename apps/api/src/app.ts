@@ -1,0 +1,34 @@
+import 'express-async-errors';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import bcrypt from 'bcryptjs';
+import { z } from 'zod';
+import { config } from './config.js';
+import { authenticate, allow, signToken } from './auth.js';
+import { AuditLog, Customer, Order, User, Vehicle } from './models.js';
+import { audit } from './audit.js';
+
+const staff = ['ADMIN', 'ADVISOR', 'TECHNICIAN'] as const;
+const orderStatuses = ['RECEIVED','DIAGNOSIS','PENDING_AUTHORIZATION','AUTHORIZED','PENDING_PARTS','IN_REPAIR','PENDING_VALIDATION','READY_FOR_DELIVERY','DELIVERED','CANCELLED'] as const;
+const customerInput = z.object({ name: z.string().min(2).max(120), phone: z.string().min(7).max(30), email: z.string().email() });
+const vehicleInput = z.object({ customerId: z.string().regex(/^[a-f\d]{24}$/i), plate: z.string().min(3).max(12), vin: z.string().max(30).optional(), brand: z.string().min(2), model: z.string().min(1), year: z.number().int().min(1886).max(2100), color: z.string().max(50).optional() });
+
+export const app = express();
+app.set('trust proxy', 1);
+app.use(helmet()); app.use(cors({ origin: config.CLIENT_ORIGIN, credentials: false })); app.use(express.json({ limit: '256kb' }));
+app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
+app.post('/api/auth/login', async (req, res) => { const input = z.object({ email: z.string().email(), password: z.string().min(8) }).parse(req.body); const user = await User.findOne({ email: input.email.toLowerCase(), active: true }); if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) return res.status(401).json({ error: 'Credenciales inválidas' }); const token = signToken(user); await audit(req, 'LOGIN', 'User', user.id); res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } }); });
+app.use('/api', authenticate);
+app.get('/api/me', async (req, res) => { const user = await User.findById(req.auth!.id).select('-passwordHash'); res.json(user); });
+app.get('/api/users', allow('ADMIN'), async (_, res) => res.json(await User.find().select('-passwordHash').sort({ name: 1 })));
+app.post('/api/users', allow('ADMIN'), async (req, res) => { const data = z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), role: z.enum(['ADMIN','ADVISOR','TECHNICIAN','INVENTORY','CUSTOMER']) }).parse(req.body); if (await User.exists({ email: data.email.toLowerCase() })) return res.status(409).json({ error: 'El correo ya está registrado' }); const user = await User.create({ ...data, email: data.email.toLowerCase(), passwordHash: await bcrypt.hash(data.password, 12) }); await audit(req, 'CREATE', 'User', user.id, undefined, { name: user.name, role: user.role }); res.status(201).json({ id: user.id, name: user.name, email: user.email, role: user.role }); });
+app.get('/api/customers', allow('ADMIN','ADVISOR','TECHNICIAN'), async (_, res) => res.json(await Customer.find().sort({ name: 1 })));
+app.post('/api/customers', allow('ADMIN','ADVISOR'), async (req, res) => { const data = customerInput.parse(req.body); const customer = await Customer.create({ ...data, email: data.email.toLowerCase() }); await audit(req, 'CREATE', 'Customer', customer.id, undefined, customer.toObject()); res.status(201).json(customer); });
+app.get('/api/vehicles', async (req, res) => { if (req.auth!.role === 'CUSTOMER') { const customer = await Customer.findOne({ userId: req.auth!.id }); return res.json(customer ? await Vehicle.find({ customerId: customer.id }).sort({ createdAt: -1 }) : []); } if (!staff.includes(req.auth!.role as typeof staff[number])) return res.status(403).json({ error: 'Permiso insuficiente' }); res.json(await Vehicle.find().populate('customerId', 'name').sort({ createdAt: -1 })); });
+app.post('/api/vehicles', allow('ADMIN','ADVISOR'), async (req, res) => { const data = vehicleInput.parse(req.body); const vehicle = await Vehicle.create({ ...data, plate: data.plate.toUpperCase(), vin: data.vin?.toUpperCase() }); await audit(req, 'CREATE', 'Vehicle', vehicle.id, undefined, vehicle.toObject()); res.status(201).json(vehicle); });
+app.get('/api/orders', async (req, res) => { let filter: Record<string, unknown> = {}; if (req.auth!.role === 'CUSTOMER') { const customer = await Customer.findOne({ userId: req.auth!.id }); if (!customer) return res.json([]); filter = { customerId: customer.id }; } else if (!staff.includes(req.auth!.role as typeof staff[number])) return res.status(403).json({ error: 'Permiso insuficiente' }); const orders = await Order.find(filter).populate('vehicleId', 'plate brand model year').sort({ createdAt: -1 }); res.json(orders); });
+app.post('/api/orders', allow('ADMIN','ADVISOR'), async (req, res) => { const data = z.object({ vehicleId: z.string().regex(/^[a-f\d]{24}$/i), complaint: z.string().min(5).max(1000) }).parse(req.body); const vehicle = await Vehicle.findById(data.vehicleId); if (!vehicle) return res.status(404).json({ error: 'Vehículo no encontrado' }); const folio = `CM-${Date.now().toString().slice(-8)}`; const order = await Order.create({ ...data, customerId: vehicle.customerId, folio }); await audit(req, 'CREATE', 'Order', order.id, undefined, order.toObject()); res.status(201).json(order); });
+app.patch('/api/orders/:id', allow('ADMIN','ADVISOR','TECHNICIAN'), async (req, res) => { const data = z.object({ status: z.enum(orderStatuses).optional(), diagnosis: z.string().max(3000).optional(), quote: z.number().min(0).optional(), authorizationStatus: z.enum(['NOT_REQUESTED','PENDING','APPROVED','REJECTED']).optional() }).refine(v => Object.keys(v).length > 0).parse(req.body); const order = await Order.findById(req.params.id); if (!order) return res.status(404).json({ error: 'Orden no encontrada' }); const before = order.toObject(); if (data.status) order.status = data.status; if (data.diagnosis !== undefined) order.diagnosis = data.diagnosis; if (data.quote !== undefined) order.quote = data.quote; if (data.authorizationStatus) order.set('authorization', { status: data.authorizationStatus, at: new Date() }); await order.save(); await audit(req, 'UPDATE', 'Order', order.id, before, order.toObject()); res.json(order); });
+app.get('/api/audit', allow('ADMIN'), async (_, res) => res.json(await AuditLog.find().populate('actorId', 'name email role').sort({ createdAt: -1 }).limit(250)));
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => { if (err instanceof z.ZodError) return res.status(422).json({ error: 'Datos inválidos', details: err.flatten() }); if (typeof err === 'object' && err && 'code' in err && (err as { code: number }).code === 11000) return res.status(409).json({ error: 'Registro duplicado' }); console.error(err); return res.status(500).json({ error: 'Error interno del servidor' }); });
