@@ -1,8 +1,14 @@
 import { Schema, model, Types } from 'mongoose';
-
 const base = { timestamps: true };
-export type Role = 'ADMIN' | 'ADVISOR' | 'TECHNICIAN' | 'INVENTORY' | 'CUSTOMER';
-export const User = model('User', new Schema({ name: { type: String, required: true, trim: true }, email: { type: String, required: true, unique: true, lowercase: true, trim: true }, passwordHash: { type: String, required: true }, role: { type: String, enum: ['ADMIN','ADVISOR','TECHNICIAN','INVENTORY','CUSTOMER'], required: true }, active: { type: Boolean, default: true } }, base));
+// CUSTOMER is retained for the existing customer portal. Internal roles are OWNER, ADMIN and RECEPTIONIST.
+export type Role = 'OWNER' | 'ADMIN' | 'RECEPTIONIST' | 'CUSTOMER' | 'ADVISOR' | 'TECHNICIAN' | 'INVENTORY';
+export type UserStatus = 'ACTIVE' | 'INACTIVE';
+export const User = model('User', new Schema({
+  name: { type: String, trim: true }, firstName: { type: String, trim: true }, lastName: { type: String, trim: true, default: '' },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true }, passwordHash: { type: String, required: true, select: false },
+  role: { type: String, enum: ['OWNER','ADMIN','RECEPTIONIST','CUSTOMER','ADVISOR','TECHNICIAN','INVENTORY'], required: true },
+  status: { type: String, enum: ['ACTIVE','INACTIVE'], default: 'ACTIVE' }, active: { type: Boolean, default: true }, lastLoginAt: Date, createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
+}, base));
 export const Customer = model('Customer', new Schema({ userId: { type: Schema.Types.ObjectId, ref: 'User', unique: true, sparse: true }, name: { type: String, required: true }, phone: { type: String, required: true }, email: { type: String, required: true, lowercase: true } }, base));
 export const Vehicle = model('Vehicle', new Schema({ customerId: { type: Schema.Types.ObjectId, ref: 'Customer', required: true, index: true }, plate: { type: String, required: true, uppercase: true, trim: true }, vin: { type: String, trim: true, uppercase: true }, brand: { type: String, required: true }, model: { type: String, required: true }, year: { type: Number, required: true, min: 1886 }, color: String }, base));
 export const Order = model('Order', new Schema({ vehicleId: { type: Schema.Types.ObjectId, ref: 'Vehicle', required: true, index: true }, customerId: { type: Schema.Types.ObjectId, ref: 'Customer', required: true, index: true }, folio: { type: String, required: true, unique: true }, status: { type: String, enum: ['RECEIVED','DIAGNOSIS','PENDING_AUTHORIZATION','AUTHORIZED','PENDING_PARTS','IN_REPAIR','PENDING_VALIDATION','READY_FOR_DELIVERY','DELIVERED','CANCELLED'], default: 'RECEIVED' }, complaint: { type: String, required: true }, diagnosis: String, quote: { type: Number, min: 0 }, authorization: { status: { type: String, enum: ['NOT_REQUESTED','PENDING','APPROVED','REJECTED'], default: 'NOT_REQUESTED' }, at: Date }, assignedTechnicianId: { type: Schema.Types.ObjectId, ref: 'User' } }, base));

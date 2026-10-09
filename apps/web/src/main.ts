@@ -1,2 +1,2 @@
 import { createApp } from 'vue'; import { createVuetify } from 'vuetify'; import * as components from 'vuetify/components'; import * as directives from 'vuetify/directives'; import '@mdi/font/css/materialdesignicons.css'; import 'vuetify/styles'; import App from './App.vue'; import router from './router';
-createApp(App).use(createVuetify({ components, directives, theme: { defaultTheme: 'light' } })).use(router).mount('#app');
+createApp(App).use(createVuetify({ components, directives, theme: { defaultTheme: 'chevymania', themes: { chevymania: { dark: false, colors: { primary: '#12304A', secondary: '#667085', accent: '#2563EB', background: '#F6F8FB', surface: '#FFFFFF', error: '#DC2626', success: '#16A34A', warning: '#F59E0B' } } } } })).use(router).mount('#app');

@@ -1,8 +1,11 @@
-import type { NextFunction, Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
-import { config } from './config.js';
-import type { Role } from './models.js';
-
-export function signToken(user: { _id: unknown; role: Role; name: string }) { return jwt.sign({ role: user.role, name: user.name }, config.JWT_SECRET, { subject: String(user._id), expiresIn: '8h' }); }
+import type { NextFunction, Request, Response } from 'express'; import jwt from 'jsonwebtoken'; import { config } from './config.js'; import type { Role } from './models.js';
+export type Permission = 'users:create'|'users:read'|'users:update'|'users:disable'|'customers:create'|'customers:read'|'customers:update'|'vehicles:create'|'vehicles:read'|'vehicles:update'|'orders:create'|'orders:read'|'orders:update'|'audit:read';
+const all: Permission[] = ['users:create','users:read','users:update','users:disable','customers:create','customers:read','customers:update','vehicles:create','vehicles:read','vehicles:update','orders:create','orders:read','orders:update','audit:read'];
+const operations: Permission[] = ['customers:create','customers:read','customers:update','vehicles:create','vehicles:read','vehicles:update','orders:create','orders:read','orders:update'];
+const permissions: Record<Role, Permission[]> = { OWNER: all, ADMIN: [...operations,'audit:read'], RECEPTIONIST: operations, CUSTOMER: [], ADVISOR: operations, TECHNICIAN: ['customers:read','vehicles:read','orders:read','orders:update'], INVENTORY: [] };
+export const displayName = (user: { firstName?: string|null; lastName?: string|null; name?: string|null }) => `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.name || '';
+export function signToken(user: { _id: unknown; role: Role; firstName?: string|null; lastName?: string|null; name?: string|null }) { return jwt.sign({ role: user.role, name: displayName(user), permissions: permissions[user.role] }, config.JWT_SECRET, { subject: String(user._id), expiresIn: '8h' }); }
 export function authenticate(req: Request, res: Response, next: NextFunction) { const raw = req.header('authorization'); if (!raw?.startsWith('Bearer ')) return res.status(401).json({ error: 'Autenticación requerida' }); try { const decoded = jwt.verify(raw.slice(7), config.JWT_SECRET) as jwt.JwtPayload; if (!decoded.sub || !decoded.role) throw new Error(); req.auth = { id: decoded.sub, role: decoded.role as Role, name: String(decoded.name ?? '') }; next(); } catch { return res.status(401).json({ error: 'Sesión inválida o expirada' }); } }
-export const allow = (...roles: Role[]) => (req: Request, res: Response, next: NextFunction) => !req.auth || !roles.includes(req.auth.role) ? res.status(403).json({ error: 'Permiso insuficiente' }) : next();
+export const allow = (...roles: Role[]) => (req: Request, res: Response, next: NextFunction) => !req.auth || !roles.includes(req.auth.role) ? res.status(403).json({ error: 'No tienes permiso para realizar esta acción' }) : next();
+export const requirePermission = (...needed: Permission[]) => (req: Request, res: Response, next: NextFunction) => !req.auth || !needed.every(p => permissions[req.auth!.role]?.includes(p)) ? res.status(403).json({ error: 'No tienes permiso para realizar esta acción' }) : next();
+export const permissionsFor = (role: Role) => permissions[role] ?? [];
